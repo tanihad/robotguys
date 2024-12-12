@@ -1,0 +1,7 @@
+lightning==2.4.0
+matplotlib==3.9.3
+numpy==2.2.0
+scipy==1.14.1
+torch==2.5.1
+torchsummary==1.5.1
+torchvision==0.20.1

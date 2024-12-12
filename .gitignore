@@ -1,0 +1,9 @@
+*.png
+__pycache__
+.lightning_logs
+lightning_logs
+imgs
+masks
+env
+wandb
+embedding-network-training
