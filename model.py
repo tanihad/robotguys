@@ -2,6 +2,8 @@ import os
 from random import randrange
 import re
 
+import numpy as np
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -40,9 +42,10 @@ def compute_iou(mask1, mask2):
 
 
 class ImageMixtureDataset(Dataset):
-    def __init__(self, img_dir, mask_dir):
+    def __init__(self, img_dir, mask_dir, goal_dir):
         self.img_dir = img_dir
         self.mask_dir = mask_dir
+        self.goal_dir = goal_dir
 
         pattern = re.compile(r"img(\d+)\.png")
 
@@ -52,6 +55,8 @@ class ImageMixtureDataset(Dataset):
             if match:
                 number = int(match.group(1))  # Extract the number
                 self.length = max(self.length, number)
+
+        self.goal_directions = np.load(self.goal_dir)
 
 
     def __len__(self):
@@ -67,15 +72,15 @@ class ImageMixtureDataset(Dataset):
         # Convert to float and normalize to [0, 1]
         image1 = image1.float() / 255.0
 
-        return image1, mask1
+        return image1, mask1, self.goal_directions[idx]
 
 
     def __getitem__(self, idx):
         irand = randrange(0, 10)
-        image1, gmix1 = self.read_img_mask(idx)
-        image2, gmix2 = self.read_img_mask(irand)
+        image1, gmix1, gdir1 = self.read_img_mask(idx)
+        image2, gmix2, gdir2 = self.read_img_mask(irand)
 
-        return image1, gmix1, image2, gmix2
+        return image1, gmix1, gdir1, image2, gmix2, gdir2
 
 
 class EmbeddingNetwork(nn.Module):
@@ -117,7 +122,7 @@ class EmbeddingNetworkModule(L.LightningModule):
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
         # it is independent of forward
-        x, mask1, y, mask2 = batch
+        x, mask1, dir1, y, mask2, dir2 = batch
         x, y = x.to(device), y.to(device)
         xe = self.embedding(x)
         ye = self.embedding(y)
@@ -140,14 +145,14 @@ def train():
     summary(model, input_size=(1, 64, 64))
     model_l = EmbeddingNetworkModule(model)
 
-    train_data = ImageMixtureDataset("imgs", "masks")
+    train_data = ImageMixtureDataset("imgs", "masks", "goal_directions.npy")
     #test_data = ImageMixtureDataset("imgs", "masks")
 
     train_dataloader = DataLoader(train_data, batch_size=4, shuffle=True, num_workers=4)
     #test_dataloader = DataLoader(test_data, batch_size=64, shuffle=True, num_workers=4)
 
     wandb_logger = WandbLogger(project="embedding-network-training")
-    trainer = L.Trainer(max_epochs=100, logger=wandb_logger, precision=16, accelerator="gpu", devices=1)
+    trainer = L.Trainer(max_epochs=10, logger=wandb_logger, precision=16, accelerator="gpu", devices=1)
     trainer.fit(model=model_l, train_dataloaders=train_dataloader)
 
 

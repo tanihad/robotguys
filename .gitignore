@@ -7,3 +7,4 @@ masks
 env
 wandb
 embedding-network-training
+goal_directions.npy
