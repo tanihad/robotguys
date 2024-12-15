@@ -1,65 +1,10 @@
 import numpy as np
 import torch
-from model import EmbeddingNetworkModule,ImageMixtureDataset
+from model import EmbeddingNetworkModule,ImageMixtureDataset, EmbeddingNetwork, device
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
-
-def retrieve():
-    checkpoint = "./lightning_logs/version_0/checkpoints/epoch=0-step=100.ckpt"
-    model = EmbeddingNetworkModule.load_from_checkpoint(checkpoint)
-    model.eval()
-
-    # choose your trained nn.Module
-    encoder = model.encoder
-    encoder.eval()
-
-    #
-    embedding_size = 16
-    lsh = RandomProjectionHash(embeddim=embedding_size)
-
-    # embed images
-    # with torch.no_grad():
-    #     embeddings = model.embedding(image_batch)
-
-    data = ImageMixtureDataset("imgs", "masks", "goal_directions.npy")
-    dataloader = DataLoader(data, batch_size=1, shuffle=False)
-
-    train_indices = range(0, int(len(data) * 0.9))
-    test_indices = range(int(len(data) * 0.9), len(data))
-
-    #dataloader for train and test
-
-    train_loader = DataLoader(data, batch_size=1, sampler=train_indices)
-    test_loader = DataLoader(data, batch_size=1, sampler=test_indices)
-
-    with torch.no_grad():
-        for i, (image1, _, _, _, _, _) in enumerate(train_loader):
-            image1 = image1.to(model.device)
-            npembedding = model.embedding(image1).cpu().numpy().flatten()
-            lsh.insert(npembedding, data_id=i)
-
-    with torch.no_grad():
-        for i, (image1, _, _, _, _, _) in enumerate(test_loader):
-            image1 = image1.to(model.device)
-            npembedding = model.embedding(image1).cpu().numpy().flatten()
-
-            similar_indices = lsh.query(npembedding, top_k=3)
-            print("Index ",i)
-            print("Similar index: ",similar_indices)
-
-    # with torch.no_grad():
-    #     for i, (image1, _, _, _, _, _) in enumerate(dataloader):
-    #         image1 = image1.to(model.device)
-    #         npembedding = model.embedding(image1).cpu().numpy().flatten()#Make np array
-    #         lsh.insert(npembedding, data_id= i)
-            #lsh.insert(npembedding, data_id=whatever theo returns here)
-
-        #for i in DataLoader(enumerate):
-
-
-
 
 
 class RandomProjectionHash:
@@ -88,11 +33,11 @@ class RandomProjectionHash:
         return int(vector_hash, 2) % self.table_size
 
     def insert(self, vector, data_id):
-        print("THis is my vector ",vector)
+        #print("THis is my vector ",vector)
         bvector_hash = self.hash_vector(vector)
-        print("binary ",bvector_hash)
+        #print("binary ",bvector_hash)
         index = self._hash_to_index(bvector_hash)
-        print("the index ",index)
+        #print("the index ",index)
         if index not in self.db:
             self.db[index] = []
 
@@ -106,90 +51,103 @@ class RandomProjectionHash:
         if index in self.db:
             for _, data_id, stored_vector in self.db[index]:
                 similarity = self.cosine_similarity(vector, stored_vector)
-                print("Cosine similarity between ",vector,"and ","stored_vector",similarity)
+                #print("Cosine similarity between ",vector,"and ","stored_vector",similarity)
                 matches.append((similarity, data_id))
 
-        return [data_id for _, data_id in sorted(matches, reverse=True)[:top_k]]
+        return [data_id for _, data_id in sorted(matches, key=lambda tup: tup[0], reverse=True)[1:(top_k+1)]]
 
     def cosine_similarity(self, vec1, vec2):
         return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
 
 
 
-def visualize_lsh_embeddings_with_images(train_embeddings, test_embeddings, train_indices, test_indices, similar_indices, train_images, test_images, title="LSH Embedding Visualization"):
-    """
-    Visualizes embeddings and their LSH-based similarity with image annotations.
+def retrieve():
+    checkpoint = "./epoch=611-step=86292.ckpt"
+    embedding_size = 16
+    model_p = EmbeddingNetwork()
+    model = EmbeddingNetworkModule.load_from_checkpoint(checkpoint, embedding=model_p)
+    model.eval()
 
-    Parameters:
-    - train_embeddings: numpy array of shape (num_train, 2) with train embeddings in 2D.
-    - test_embeddings: numpy array of shape (num_test, 2) with test embeddings in 2D.
-    - train_indices: list of train indices.
-    - test_indices: list of test indices.
-    - similar_indices: list of lists, where similar_indices[i] contains the indices of train embeddings similar to test_embeddings[i].
-    - train_images: list of images corresponding to train embeddings.
-    - test_images: list of images corresponding to test embeddings.
-    - title: Title for the plot.
-    """
-    plt.figure(figsize=(12, 10))
+    # choose your trained nn.Module
+    embedding = model.embedding
+    embedding.eval()
 
-    # Plot train embeddings
-    train_embeddings = np.array(train_embeddings)
-    plt.scatter(train_embeddings[:, 0], train_embeddings[:, 1], c='blue', label='Train Embeddings', alpha=0.7)
+    #
+    lsh = RandomProjectionHash(embeddim=embedding_size)
 
-    # Plot test embeddings
-    test_embeddings = np.array(test_embeddings)
-    plt.scatter(test_embeddings[:, 0], test_embeddings[:, 1], c='red', label='Test Embeddings', alpha=0.7)
+    # embed images
+    # with torch.no_grad():
+    #     embeddings = model.embedding(image_batch)
 
-    # Function to add images to the plot
-    def add_image_to_plot(image, coords, zoom=0.1):
-        imagebox = OffsetImage(image, zoom=zoom)
-        ab = AnnotationBbox(imagebox, coords, frameon=False)
-        plt.gca().add_artist(ab)
+    train_data = ImageMixtureDataset("imgs", "masks", "goal_directions.npy", data_range=(0, 9000))
+    test_data = ImageMixtureDataset("imgs", "masks", "goal_directions.npy", data_range=(9000, 10000-2))
 
-    # Annotate test points and connect to similar train points
-    for i, test_idx in enumerate(test_indices):
-        test_point = test_embeddings[i]
-        plt.annotate(f"T{test_idx}", (test_point[0], test_point[1]), color='red')
-        add_image_to_plot(test_images[i], test_point)
+    train_loader = DataLoader(train_data, batch_size=1)
+    test_loader = DataLoader(test_data, batch_size=1)
 
-        for sim_idx in similar_indices[i]:
-            train_point = train_embeddings[train_indices.index(sim_idx)]
-            plt.plot([test_point[0], train_point[0]], [test_point[1], train_point[1]], 'g--', alpha=0.5)
+    with torch.no_grad():
+        for i, (image1, mask1, dir1, _, _, _) in enumerate(train_loader):
+            image_npy = image1.cpu().numpy()
+            mask_npy = mask1.cpu().numpy()
+            dir_npy = dir1.cpu().numpy()
 
-    # Annotate train points
-    for i, train_idx in enumerate(train_indices):
-        train_point = train_embeddings[i]
-        plt.annotate(f"Tr{train_idx}", (train_point[0], train_point[1]), color='blue')
-        add_image_to_plot(train_images[i], train_point)
+            image1 = image1.to(device)
+            dir1 = dir1.to(device)
 
-    plt.title(title)
-    plt.legend()
-    plt.xlabel("Embedding Dimension 1")
-    plt.ylabel("Embedding Dimension 2")
-    plt.grid(True)
-    plt.show()
+            npembedding = model.embedding(image1, dir1).cpu().numpy().flatten()
+            lsh.insert(npembedding, data_id=(image_npy, mask_npy, dir_npy))
 
-# Example usage:
-# Assuming train_embeddings, test_embeddings are 2D arrays and similar_indices is generated from LSH.
-# train_embeddings = np.random.rand(10, 2)  # Replace with real embeddings
-# test_embeddings = np.random.rand(5, 2)   # Replace with real embeddings
-# train_indices = list(range(len(train_embeddings)))
-# test_indices = list(range(len(test_embeddings)))
-# similar_indices = [[0, 2, 4], [1, 3, 5], ...]  # Replace with actual similar indices
-# train_images = [np.random.rand(10, 10, 3) for _ in range(len(train_embeddings))]  # Replace with real images
-# test_images = [np.random.rand(10, 10, 3) for _ in range(len(test_embeddings))]  # Replace with real images
-# visualize_lsh_embeddings_with_images(train_embeddings, test_embeddings, train_indices, test_indices, similar_indices, train_im
+    original_images = []
+    similar_images_arrays = []
+
+    with torch.no_grad():
+        for i, (image1, mask1, dir1, _, _, _) in enumerate(test_loader):
+            image_npy = image1.cpu().numpy()
+            mask_npy = mask1.cpu().numpy()
+            dir_npy = dir1.cpu().numpy()
+            original_images.append((image_npy, mask_npy, dir_npy))
+
+            image1 = image1.to(device)
+            dir1 = dir1.to(device)
+            npembedding = model.embedding(image1, dir1).cpu().numpy().flatten()
+
+            similar_images = lsh.query(npembedding, top_k=3)
+
+            similar_images_arrays.append(similar_images)
+
+            print("Index ",i)
+
+
+    for original_img, similar_imgs in zip(original_images, similar_images_arrays):
+        print(original_img)
+        original_img, original_mask, direct = original_img
+        # Create a new figure for each iteration
+        fig, axes = plt.subplots(1, len(similar_imgs) + 1, figsize=(15, 5))
+
+        # Plot the original image with caption 'Original'
+        axes[0].imshow(original_mask.squeeze(), cmap='gray')  # Use 'cmap' for grayscale images if needed
+        axes[0].axis('off')
+        axes[0].set_title('Original')
+
+        height, width = original_img.squeeze().shape
+        center_x = width / 2
+        center_y = height / 2
+
+        axes[0].quiver(center_x, center_y, 7*direct.squeeze()[0], 7*direct.squeeze()[1], angles='xy', scale_units='xy', scale=1, color='red')
+
+        # Plot each similar image with caption 'Similar'
+        for i, similar_img in enumerate(similar_imgs):
+            similar_img, similar_mask, direct = similar_img
+            axes[i + 1].imshow(similar_mask.squeeze(), cmap='gray')
+            axes[i + 1].axis('off')
+            axes[i + 1].set_title('Similar')
+
+            axes[i + 1].quiver(center_x, center_y, 7*direct.squeeze()[0], 7*direct.squeeze()[1], angles='xy', scale_units='xy', scale=1, color='red')
+
+        # Display the plot
+        plt.tight_layout()
+        plt.show()
 
 
 if __name__ == '__main__':
-    test = RandomProjectionHash(embeddim=2, numprojections=16, projectdim=8, table_size=10)
-    vector_1 = np.array([1., 2.])
-    vector_2 = np.array([2., 3.])
-    vector_3 = np.array([3., 4.])
-    vector_4 = np.array([5., 6.])
-    test.insert(vector_1, "1")
-    test.insert(vector_2, "2")
-    test.insert(vector_3, "3")
-    test.insert(vector_4, "4")
-    result = test.query(vector_1, top_k=3)
-    print("Top 3 ", result)
+    retrieve()
